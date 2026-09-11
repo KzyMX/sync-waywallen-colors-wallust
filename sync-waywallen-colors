@@ -1,15 +1,94 @@
 #!/usr/bin/env bash
-# sync-waywallen-colors — Wallust v4 (robusto)
-# Mantiene la idea original: detectar preview.* reciente/manual/proceso,
-# extraer paleta con wallust y aplicar KDE, evitando duplicados.
-
+# sync-waywallen-colors — Wallust v4.1 (robusto + fix falsos positivos en descargas)
 set -u -o pipefail
 export LC_ALL=C
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 umask 077
 
 WE_APPID=431960
-STEAM_WE_DIR="${STEAM_WE_DIR:-$HOME/.steam/steam/steamapps/workshop/content/$WE_APPID}"
+STEAM_FLATPAK_ID="com.valvesoftware.Steam"
+STEAM_INSTALL_TYPE="${STEAM_INSTALL_TYPE:-auto}"
+
+case "$STEAM_INSTALL_TYPE" in
+    flatpak|native|auto) ;;
+    *) STEAM_INSTALL_TYPE="auto" ;;
+esac
+
+detect_steam_install() {
+    local d
+
+    if [ -n "${STEAM_WE_DIR:-}" ]; then
+        if [ "$STEAM_INSTALL_TYPE" = "auto" ]; then
+            case "$STEAM_WE_DIR" in
+                "$HOME/.var/app/$STEAM_FLATPAK_ID/"*) STEAM_INSTALL_TYPE="flatpak" ;;
+                *) STEAM_INSTALL_TYPE="native" ;;
+            esac
+        fi
+        return 0
+    fi
+
+    for d in \
+        "$HOME/.var/app/$STEAM_FLATPAK_ID/data/Steam/steamapps/workshop/content/$WE_APPID" \
+        "$HOME/.var/app/$STEAM_FLATPAK_ID/.steam/steam/steamapps/workshop/content/$WE_APPID" \
+        "$HOME/.var/app/$STEAM_FLATPAK_ID/.local/share/Steam/steamapps/workshop/content/$WE_APPID"
+    do
+        if [ -d "$d" ]; then
+            STEAM_INSTALL_TYPE="flatpak"
+            STEAM_WE_DIR="$d"
+            return 0
+        fi
+    done
+
+    for d in \
+        "$HOME/.steam/steam/steamapps/workshop/content/$WE_APPID" \
+        "$HOME/.local/share/Steam/steamapps/workshop/content/$WE_APPID" \
+        "$HOME/.steam/root/steamapps/workshop/content/$WE_APPID" \
+        "$HOME/.steam/steamapps/workshop/content/$WE_APPID"
+    do
+        if [ -d "$d" ]; then
+            STEAM_INSTALL_TYPE="native"
+            STEAM_WE_DIR="$d"
+            return 0
+        fi
+    done
+
+    if command -v flatpak >/dev/null 2>&1 && flatpak info "$STEAM_FLATPAK_ID" >/dev/null 2>&1; then
+        STEAM_INSTALL_TYPE="flatpak"
+        STEAM_WE_DIR="$HOME/.var/app/$STEAM_FLATPAK_ID/data/Steam/steamapps/workshop/content/$WE_APPID"
+        return 0
+    fi
+
+    if command -v steam >/dev/null 2>&1 || [ -x /usr/bin/steam ] || [ -x /usr/bin/steam-native ] || [ -d "$HOME/.local/share/Steam" ]; then
+        STEAM_INSTALL_TYPE="native"
+        if [ -d "$HOME/.local/share/Steam" ]; then
+            STEAM_WE_DIR="$HOME/.local/share/Steam/steamapps/workshop/content/$WE_APPID"
+        else
+            STEAM_WE_DIR="$HOME/.steam/steam/steamapps/workshop/content/$WE_APPID"
+        fi
+        return 0
+    fi
+
+    STEAM_INSTALL_TYPE="native"
+    STEAM_WE_DIR="$HOME/.steam/steam/steamapps/workshop/content/$WE_APPID"
+    return 0
+}
+
+if [ "$STEAM_INSTALL_TYPE" = "auto" ]; then
+    detect_steam_install
+fi
+
+if [ -z "${STEAM_WE_DIR:-}" ]; then
+    case "$STEAM_INSTALL_TYPE" in
+        flatpak)
+            STEAM_WE_DIR="$HOME/.var/app/$STEAM_FLATPAK_ID/data/Steam/steamapps/workshop/content/$WE_APPID"
+            ;;
+        *)
+            STEAM_INSTALL_TYPE="native"
+            STEAM_WE_DIR="$HOME/.steam/steam/steamapps/workshop/content/$WE_APPID"
+            ;;
+    esac
+fi
+
 SCHEME_NAME="${SCHEME_NAME:-Wallust}"
 COLOR_SCHEME_FILE="${COLOR_SCHEME_FILE:-$HOME/.local/share/color-schemes/${SCHEME_NAME}.colors}"
 RECENT_MINUTES="${RECENT_MINUTES:-2}"
@@ -17,8 +96,8 @@ MAXPX="${MAXPX:-500}"
 FORCE=0
 
 if [ "${1:-}" = "--force" ] || [ "${1:-}" = "-f" ]; then
-  FORCE=1
-  shift
+    FORCE=1
+    shift
 fi
 MANUAL_TARGET="${1:-}"
 
@@ -30,7 +109,7 @@ case "$MAXPX" in ''|*[!0-9]*) MAXPX=500 ;; esac
 UID_NUM="$(id -u 2>/dev/null || echo 0)"
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
 if [ ! -d "$RUNTIME_DIR" ] || [ ! -w "$RUNTIME_DIR" ]; then
-  RUNTIME_DIR=/tmp
+    RUNTIME_DIR=/tmp
 fi
 STATE_CACHE="$RUNTIME_DIR/waywallen_last_applied_image_wallust.$UID_NUM"
 LOCK_FILE="$RUNTIME_DIR/waywallen_colors.lock.$UID_NUM"
@@ -41,8 +120,8 @@ err() { echo "[sync][ERROR] $*" >&2; }
 
 TMP_WORK="$(mktemp -d "${TMPDIR:-/tmp}/waywallen.XXXXXX" 2>/dev/null || true)"
 if [ -z "$TMP_WORK" ] || [ ! -d "$TMP_WORK" ]; then
-  err "No se pudo crear directorio temporal."
-  exit 1
+    err "No se pudo crear directorio temporal."
+    exit 1
 fi
 
 TEMP_FRAME="$TMP_WORK/preview_frame.png"
@@ -53,178 +132,169 @@ WALLUST_ERR="$TMP_WORK/wallust_last_error.log"
 LOCK_DIR_USED=0
 
 cleanup() {
-  rm -rf -- "$TMP_WORK" 2>/dev/null || true
-  if [ -n "${STATE_TMP:-}" ]; then
-    rm -f -- "$STATE_TMP" 2>/dev/null || true
-  fi
-  if [ "$LOCK_DIR_USED" = "1" ]; then
-    rm -f -- "${LOCK_FILE}.d/pid" 2>/dev/null || true
-    rmdir -- "${LOCK_FILE}.d" 2>/dev/null || true
-  fi
+    rm -rf -- "$TMP_WORK" 2>/dev/null || true
+    if [ -n "${STATE_TMP:-}" ]; then
+        rm -f -- "$STATE_TMP" 2>/dev/null || true
+    fi
+    if [ "$LOCK_DIR_USED" = "1" ]; then
+        rm -f -- "${LOCK_FILE}.d/pid" 2>/dev/null || true
+        rmdir -- "${LOCK_FILE}.d" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT INT TERM
 
-# ---------------------------------------------------------------
-# Lock: evita instancias simultáneas y rebotes
-# ---------------------------------------------------------------
 if command -v flock >/dev/null 2>&1; then
-  exec 9>"$LOCK_FILE" || { err "No se pudo abrir el lock file."; exit 1; }
-  if ! flock -x -w 30 9; then
-    log "Otra instancia sigue activa; timeout del lock."
-    exit 0
-  fi
+    exec 9>"$LOCK_FILE" || { err "No se pudo abrir el lock file."; exit 1; }
+    if ! flock -x -w 30 9; then
+        log "Otra instancia sigue activa; timeout del lock."
+        exit 0
+    fi
 else
-  LOCK_DIR="${LOCK_FILE}.d"
-  i=0
-  until mkdir -- "$LOCK_DIR" 2>/dev/null; do
-    if [ -e "$LOCK_DIR" ] && [ ! -d "$LOCK_DIR" ]; then
-      rm -f -- "$LOCK_DIR" 2>/dev/null || true
-    fi
-
-    old_pid="$(cat -- "$LOCK_DIR/pid" 2>/dev/null || true)"
-    if [ -n "$old_pid" ] && ! kill -0 -- "$old_pid" 2>/dev/null; then
-      rm -f -- "$LOCK_DIR/pid" 2>/dev/null || true
-      rmdir -- "$LOCK_DIR" 2>/dev/null || true
-      continue
-    fi
-
-    i=$((i + 1))
-    if [ "$i" -gt 60 ]; then
-      log "Otra instancia está ejecutándose; saliendo para evitar rebotes."
-      exit 0
-    fi
-    sleep 0.5
-  done
-  echo "$$" > "$LOCK_DIR/pid"
-  LOCK_DIR_USED=1
+    LOCK_DIR="${LOCK_FILE}.d"
+    i=0
+    until mkdir -- "$LOCK_DIR" 2>/dev/null; do
+        if [ -e "$LOCK_DIR" ] && [ ! -d "$LOCK_DIR" ]; then
+            rm -f -- "$LOCK_DIR" 2>/dev/null || true
+        fi
+        old_pid="$(cat -- "$LOCK_DIR/pid" 2>/dev/null || true)"
+        if [ -n "$old_pid" ] && ! kill -0 -- "$old_pid" 2>/dev/null; then
+            rm -f -- "$LOCK_DIR/pid" 2>/dev/null || true
+            rmdir -- "$LOCK_DIR" 2>/dev/null || true
+            continue
+        fi
+        i=$((i + 1))
+        if [ "$i" -gt 60 ]; then
+            log "Otra instancia está ejecutándose; saliendo para evitar rebotes."
+            exit 0
+        fi
+        sleep 0.5
+    done
+    echo "$$" > "$LOCK_DIR/pid"
+    LOCK_DIR_USED=1
 fi
 
 mkdir -p -- "$(dirname -- "$COLOR_SCHEME_FILE")" 2>/dev/null || true
 
 MAGICK_BIN=""
 if command -v magick >/dev/null 2>&1; then
-  MAGICK_BIN="magick"
+    MAGICK_BIN="magick"
 elif command -v convert >/dev/null 2>&1; then
-  MAGICK_BIN="convert"
+    MAGICK_BIN="convert"
 fi
 
 normalize_path() {
-  local p="$1" out=""
-  out="$(readlink -f -- "$p" 2>/dev/null || true)"
-  if [ -n "$out" ]; then
-    printf '%s' "$out"
-  else
-    printf '%s' "$p"
-  fi
+    local p="$1" out=""
+    out="$(readlink -f -- "$p" 2>/dev/null || true)"
+    if [ -n "$out" ]; then
+        printf '%s' "$out"
+    else
+        printf '%s' "$p"
+    fi
 }
 
 make_hash() {
-  local f="$1" h=""
-  [ -f "$f" ] && [ -r "$f" ] || return 1
-
-  if command -v sha256sum >/dev/null 2>&1; then
-    h="$(sha256sum -- "$f" 2>/dev/null | awk '{print $1}')"
-  elif command -v shasum >/dev/null 2>&1; then
-    h="$(shasum -a 256 -- "$f" 2>/dev/null | awk '{print $1}')"
-  elif command -v openssl >/dev/null 2>&1; then
-    h="$(openssl dgst -sha256 "$f" 2>/dev/null | awk '{print $NF}')"
-  elif command -v md5sum >/dev/null 2>&1; then
-    h="$(md5sum -- "$f" 2>/dev/null | awk '{print $1}')"
-  fi
-
-  if [ -z "$h" ]; then
-    h="stat-$(stat -c '%s-%Y-%i' -- "$f" 2>/dev/null || stat -f '%z-%m-%i' -- "$f" 2>/dev/null || echo unknown)"
-  fi
-
-  printf '%s' "$h"
+    local f="$1" h=""
+    [ -f "$f" ] && [ -r "$f" ] || return 1
+    if command -v sha256sum >/dev/null 2>&1; then
+        h="$(sha256sum -- "$f" 2>/dev/null | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+        h="$(shasum -a 256 -- "$f" 2>/dev/null | awk '{print $1}')"
+    elif command -v openssl >/dev/null 2>&1; then
+        h="$(openssl dgst -sha256 "$f" 2>/dev/null | awk '{print $NF}')"
+    elif command -v md5sum >/dev/null 2>&1; then
+        h="$(md5sum -- "$f" 2>/dev/null | awk '{print $1}')"
+    fi
+    if [ -z "$h" ]; then
+        h="stat-$(stat -c '%s-%Y-%i' -- "$f" 2>/dev/null || stat -f '%z-%m-%i' -- "$f" 2>/dev/null || echo unknown)"
+    fi
+    printf '%s' "$h"
 }
 
 wait_file_stable() {
-  local f="$1" i s1 s2
-  for i in 1 2 3 4 5 6; do
-    s1="$(stat -c '%s %Y' -- "$f" 2>/dev/null || stat -f '%z %m' -- "$f" 2>/dev/null || echo '0 0')"
-    sleep 0.4
-    s2="$(stat -c '%s %Y' -- "$f" 2>/dev/null || stat -f '%z %m' -- "$f" 2>/dev/null || echo '0 0')"
-
-    if [ "$s1" = "$s2" ] && [ "${s1%% *}" -gt 0 ]; then
-      return 0
-    fi
-  done
-  return 0
+    local f="$1" i s1 s2
+    for i in 1 2 3 4 5 6; do
+        s1="$(stat -c '%s %Y' -- "$f" 2>/dev/null || stat -f '%z %m' -- "$f" 2>/dev/null || echo '0 0')"
+        sleep 0.4
+        s2="$(stat -c '%s %Y' -- "$f" 2>/dev/null || stat -f '%z %m' -- "$f" 2>/dev/null || echo '0 0')"
+        if [ "$s1" = "$s2" ] && [ "${s1%% *}" -gt 0 ]; then
+            return 0
+        fi
+    done
+    return 0
 }
 
 detect_running_id() {
-  local lines ids cand
-
-  lines="$(ps -eo args= 2>/dev/null | grep -i "$WE_APPID" | grep -v grep || true)"
-  [ -n "$lines" ] || return 1
-
-  ids="$(printf '%s\n' "$lines" | grep -oE "$WE_APPID/[0-9]{6,}" | grep -oE '[0-9]{6,}$' | sort -u || true)"
-
-  if [ -z "$ids" ]; then
-    ids="$(printf '%s\n' "$lines" | grep -oE '[0-9]{10}' | sort -u || true)"
-  fi
-
-  while IFS= read -r cand; do
-    [ -n "$cand" ] || continue
-    if [ -d "$STEAM_WE_DIR/$cand" ]; then
-      printf '%s' "$cand"
-      return 0
+    local lines ids cand
+    lines="$(ps -eo args= 2>/dev/null | grep -i "$WE_APPID" | grep -v grep || true)"
+    [ -n "$lines" ] || return 1
+    ids="$(printf '%s\n' "$lines" | grep -oE "$WE_APPID/[0-9]{6,}" | grep -oE '[0-9]{6,}$' | sort -u || true)"
+    if [ -z "$ids" ]; then
+        ids="$(printf '%s\n' "$lines" | grep -oE '[0-9]{10}' | sort -u || true)"
     fi
-  done <<< "$ids"
-
-  return 1
+    while IFS= read -r cand; do
+        [ -n "$cand" ] || continue
+        if [ -d "$STEAM_WE_DIR/$cand" ]; then
+            printf '%s' "$cand"
+            return 0
+        fi
+    done <<< "$ids"
+    return 1
 }
 
 IMAGE=""
+RUNNING_ID=""
 
 # ---------------------------------------------------------------
-# 1) Argumento manual
+# 1) Argumento manual (Prioridad absoluta)
 # ---------------------------------------------------------------
 if [ -n "$MANUAL_TARGET" ]; then
-  if [ -d "$MANUAL_TARGET" ]; then
-    MANUAL_DIR="$(normalize_path "$MANUAL_TARGET")"
-    while IFS= read -r -d '' f; do
-      IMAGE="$f"
-      break
-    done < <(find "$MANUAL_DIR" -maxdepth 2 -type f \( -iname 'preview.png' -o -iname 'preview.jpg' -o -iname 'preview.gif' \) -print0 2>/dev/null)
-  elif [ -e "$MANUAL_TARGET" ]; then
-    IMAGE="$(normalize_path "$MANUAL_TARGET")"
-  fi
+    if [ -d "$MANUAL_TARGET" ]; then
+        MANUAL_DIR="$(normalize_path "$MANUAL_TARGET")"
+        while IFS= read -r -d '' f; do
+            IMAGE="$f"
+            break
+        done < <(find "$MANUAL_DIR" -maxdepth 2 -type f \( -iname 'preview.png' -o -iname 'preview.jpg' -o -iname 'preview.gif' \) -print0 2>/dev/null)
+    elif [ -e "$MANUAL_TARGET" ]; then
+        IMAGE="$(normalize_path "$MANUAL_TARGET")"
+    fi
 fi
 
 # ---------------------------------------------------------------
-# 2) Preview reciente
+# [FIX] 2) Proceso activo (Prioridad sobre archivos recientes)
+# Si Wallpaper Engine está corriendo, SIEMPRE confiamos en él primero.
+# Esto evita que una descarga en segundo plano dispare el cambio de color.
 # ---------------------------------------------------------------
 if [ -z "$IMAGE" ]; then
-  while IFS= read -r entry; do
-    [ -n "$entry" ] || continue
-    IMAGE="${entry#* }"
-    log "Fondo detectado por modificación reciente: $IMAGE"
-    break
-  done < <(find "$STEAM_WE_DIR" -maxdepth 2 -type f \( -iname 'preview.png' -o -iname 'preview.jpg' -o -iname 'preview.gif' \) -mmin "-$RECENT_MINUTES" -printf '%T@ %p\n' 2>/dev/null | sort -nr)
+    RUNNING_ID="$(detect_running_id || true)"
+    if [ -n "$RUNNING_ID" ]; then
+        while IFS= read -r -d '' f; do
+            IMAGE="$f"
+            log "Fondo detectado por proceso activo (ID: $RUNNING_ID)"
+            break
+        done < <(find "$STEAM_WE_DIR/$RUNNING_ID" -maxdepth 2 -type f \( -iname 'preview.png' -o -iname 'preview.jpg' -o -iname 'preview.gif' \) -print0 2>/dev/null)
+    fi
 fi
 
 # ---------------------------------------------------------------
-# 3) Proceso activo
+# [FIX] 3) Preview reciente (SOLO si no hay proceso activo)
+# Si llegamos aquí, es porque no hay proceso de Wallpaper Engine corriendo,
+# o el proceso no tiene preview. Ahora sí buscamos archivos recientes.
 # ---------------------------------------------------------------
 if [ -z "$IMAGE" ]; then
-  RUNNING_ID="$(detect_running_id || true)"
-  if [ -n "$RUNNING_ID" ]; then
-    while IFS= read -r -d '' f; do
-      IMAGE="$f"
-      log "Fondo detectado por proceso activo (ID: $RUNNING_ID)"
-      break
-    done < <(find "$STEAM_WE_DIR/$RUNNING_ID" -maxdepth 2 -type f \( -iname 'preview.png' -o -iname 'preview.jpg' -o -iname 'preview.gif' \) -print0 2>/dev/null)
-  fi
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        IMAGE="${entry#* }"
+        log "Fondo detectado por modificación reciente (sin proceso activo): $IMAGE"
+        break
+    done < <(find "$STEAM_WE_DIR" -maxdepth 2 -type f \( -iname 'preview.png' -o -iname 'preview.jpg' -o -iname 'preview.gif' \) -mmin "-$RECENT_MINUTES" -printf '%T@ %p\n' 2>/dev/null | sort -nr)
 fi
 
 # ---------------------------------------------------------------
 # 4) Validación
 # ---------------------------------------------------------------
 if [ -z "$IMAGE" ] || [ ! -f "$IMAGE" ] || [ ! -r "$IMAGE" ]; then
-  err "No se pudo detectar ninguna vista previa válida."
-  exit 1
+    err "No se pudo detectar ninguna vista previa válida."
+    exit 1
 fi
 
 IMAGE="$(normalize_path "$IMAGE")"
@@ -232,8 +302,8 @@ IMAGE="$(normalize_path "$IMAGE")"
 wait_file_stable "$IMAGE"
 
 if [ ! -s "$IMAGE" ]; then
-  err "La vista previa está vacía o sigue escribiéndose."
-  exit 1
+    err "La vista previa está vacía o sigue escribiéndose."
+    exit 1
 fi
 
 # ---------------------------------------------------------------
@@ -243,8 +313,8 @@ CONTENT_HASH="$(make_hash "$IMAGE" || true)"
 PREV_HASH="$(cat -- "$STATE_CACHE" 2>/dev/null || true)"
 
 if [ "$FORCE" -eq 0 ] && [ -n "$PREV_HASH" ] && [ -n "$CONTENT_HASH" ] && [ "$PREV_HASH" = "$CONTENT_HASH" ]; then
-  log "Sin cambios (hash idéntico). No se reaplica."
-  exit 0
+    log "Sin cambios (hash idéntico). No se reaplica."
+    exit 0
 fi
 
 log "Procesando imagen: $IMAGE"
@@ -253,27 +323,24 @@ log "Procesando imagen: $IMAGE"
 # 5) GIF -> frame
 # ---------------------------------------------------------------
 case "${IMAGE##*.}" in
-  [gG][iI][fF])
-    rm -f -- "$TEMP_FRAME"
-
-    if command -v ffmpeg >/dev/null 2>&1; then
-      ffmpeg -y -v error -ss 1 -i "$IMAGE" -frames:v 1 "$TEMP_FRAME" </dev/null 2>"$TMP_WORK/ffmpeg.err" || true
-      if [ ! -s "$TEMP_FRAME" ]; then
-        ffmpeg -y -v error -i "$IMAGE" -frames:v 1 "$TEMP_FRAME" </dev/null 2>>"$TMP_WORK/ffmpeg.err" || true
-      fi
-    fi
-
-    if [ ! -s "$TEMP_FRAME" ] && [ -n "$MAGICK_BIN" ]; then
-      "$MAGICK_BIN" "$IMAGE[0]" "$TEMP_FRAME" 2>/dev/null || true
-    fi
-
-    if [ -s "$TEMP_FRAME" ]; then
-      IMAGE="$TEMP_FRAME"
-      log "GIF procesado -> $IMAGE"
-    else
-      log "No se pudo extraer frame del GIF; se intenta la imagen original."
-    fi
-    ;;
+    [gG][iI][fF])
+        rm -f -- "$TEMP_FRAME"
+        if command -v ffmpeg >/dev/null 2>&1; then
+            ffmpeg -y -v error -ss 1 -i "$IMAGE" -frames:v 1 "$TEMP_FRAME" </dev/null 2>"$TMP_WORK/ffmpeg.err" || true
+            if [ ! -s "$TEMP_FRAME" ]; then
+                ffmpeg -y -v error -i "$IMAGE" -frames:v 1 "$TEMP_FRAME" </dev/null 2>>"$TMP_WORK/ffmpeg.err" || true
+            fi
+        fi
+        if [ ! -s "$TEMP_FRAME" ] && [ -n "$MAGICK_BIN" ]; then
+            "$MAGICK_BIN" "$IMAGE[0]" "$TEMP_FRAME" 2>/dev/null || true
+        fi
+        if [ -s "$TEMP_FRAME" ]; then
+            IMAGE="$TEMP_FRAME"
+            log "GIF procesado -> $IMAGE"
+        else
+            log "No se pudo extraer frame del GIF; se intenta la imagen original."
+        fi
+        ;;
 esac
 
 # ---------------------------------------------------------------
@@ -282,25 +349,24 @@ esac
 TARGET="$IMAGE"
 
 if [ -n "$MAGICK_BIN" ]; then
-  if "$MAGICK_BIN" "$IMAGE[0]" -resize "${MAXPX}x${MAXPX}>" -depth 8 "$SMALL" 2>/dev/null && [ -s "$SMALL" ]; then
-    SAT_MEAN="$("$MAGICK_BIN" "$SMALL" -colorspace HSL -channel G -separate -format "%[fx:mean]" info: 2>/dev/null || true)"
-
-    if [[ "$SAT_MEAN" =~ ^[0-9]*\.?[0-9]+$ ]]; then
-      if awk -v s="$SAT_MEAN" 'BEGIN { exit ((s+0 < 0.08) ? 0 : 1) }'; then
-        if "$MAGICK_BIN" "$SMALL" -modulate 100,0,100 -depth 8 "$SMALL_BW" 2>/dev/null && [ -s "$SMALL_BW" ]; then
-          TARGET="$SMALL_BW"
-          log "B/N detectado (sat=$SAT_MEAN): grises fieles."
+    if "$MAGICK_BIN" "$IMAGE[0]" -resize "${MAXPX}x${MAXPX}>" -depth 8 "$SMALL" 2>/dev/null && [ -s "$SMALL" ]; then
+        SAT_MEAN="$("$MAGICK_BIN" "$SMALL" -colorspace HSL -channel G -separate -format "%[fx:mean]" info: 2>/dev/null || true)"
+        if [[ "$SAT_MEAN" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+            if awk -v s="$SAT_MEAN" 'BEGIN { exit ((s+0 < 0.08) ? 0 : 1) }'; then
+                if "$MAGICK_BIN" "$SMALL" -modulate 100,0,100 -depth 8 "$SMALL_BW" 2>/dev/null && [ -s "$SMALL_BW" ]; then
+                    TARGET="$SMALL_BW"
+                    log "B/N detectado (sat=$SAT_MEAN): grises fieles."
+                else
+                    TARGET="$SMALL"
+                fi
+            else
+                TARGET="$SMALL"
+                log "Sat media=$SAT_MEAN: extracción fiel."
+            fi
         else
-          TARGET="$SMALL"
+            TARGET="$SMALL"
         fi
-      else
-        TARGET="$SMALL"
-        log "Sat media=$SAT_MEAN: extracción fiel."
-      fi
-    else
-      TARGET="$SMALL"
     fi
-  fi
 fi
 
 # ---------------------------------------------------------------
@@ -308,101 +374,95 @@ fi
 # ---------------------------------------------------------------
 WALLUST_BIN="$(command -v wallust 2>/dev/null || true)"
 if [ -z "$WALLUST_BIN" ] && [ -x "$HOME/.cargo/bin/wallust" ]; then
-  WALLUST_BIN="$HOME/.cargo/bin/wallust"
+    WALLUST_BIN="$HOME/.cargo/bin/wallust"
 fi
 
 WALLUST_SUCCESS=0
 
 try_wallust() {
-  if "$WALLUST_BIN" run -p dark "$@" >/dev/null 2>"$WALLUST_ERR"; then
-    if [ -e "$COLOR_SCHEME_FILE" ] && [ ! -s "$COLOR_SCHEME_FILE" ]; then
-      log "Aviso: $COLOR_SCHEME_FILE existe pero quedó vacío."
+    if "$WALLUST_BIN" run -p dark "$@" >/dev/null 2>"$WALLUST_ERR"; then
+        if [ -e "$COLOR_SCHEME_FILE" ] && [ ! -s "$COLOR_SCHEME_FILE" ]; then
+            log "Aviso: $COLOR_SCHEME_FILE existe pero quedó vacío."
+        fi
+        return 0
     fi
-    return 0
-  fi
-
-  log "Wallust falló ($*): $(tail -n 1 "$WALLUST_ERR" 2>/dev/null)"
-  return 1
+    log "Wallust falló ($*): $(tail -n 1 "$WALLUST_ERR" 2>/dev/null)"
+    return 1
 }
 
 if [ -n "$WALLUST_BIN" ] && [ -x "$WALLUST_BIN" ]; then
-  if try_wallust "$TARGET"; then
-    WALLUST_SUCCESS=1
-  elif try_wallust -b kmeans "$TARGET"; then
-    WALLUST_SUCCESS=1
-  elif [ "$TARGET" != "$IMAGE" ] && { try_wallust "$IMAGE" || try_wallust -b kmeans "$IMAGE"; }; then
-    WALLUST_SUCCESS=1
-  fi
-
-  if [ "$WALLUST_SUCCESS" -eq 0 ]; then
-    log "Modo seguro (color promedio)..."
-
-    AVG_SRC="$SMALL"
-    [ -s "$AVG_SRC" ] || AVG_SRC="$IMAGE"
-
-    if [ -n "$MAGICK_BIN" ]; then
-      AVG_COLOR="$("$MAGICK_BIN" "$AVG_SRC[0]" -resize 1x1! -format "%[hex:u.p{0,0}]" info: 2>/dev/null || true)"
-      AVG_COLOR="${AVG_COLOR#\#}"
-      AVG_COLOR="${AVG_COLOR:0:6}"
-
-      if [[ "$AVG_COLOR" =~ ^[0-9A-Fa-f]{6}$ ]]; then
-        if "$MAGICK_BIN" -size 200x200 "gradient:#${AVG_COLOR}-black" "$SAFE_PNG" 2>/dev/null && [ -s "$SAFE_PNG" ]; then
-          if try_wallust "$SAFE_PNG" || try_wallust -b kmeans "$SAFE_PNG"; then
-            WALLUST_SUCCESS=1
-          fi
-        fi
-      fi
+    if try_wallust "$TARGET"; then
+        WALLUST_SUCCESS=1
+    elif try_wallust -b kmeans "$TARGET"; then
+        WALLUST_SUCCESS=1
+    elif [ "$TARGET" != "$IMAGE" ] && { try_wallust "$IMAGE" || try_wallust -b kmeans "$IMAGE"; }; then
+        WALLUST_SUCCESS=1
     fi
-  fi
+
+    if [ "$WALLUST_SUCCESS" -eq 0 ]; then
+        log "Modo seguro (color promedio)..."
+        AVG_SRC="$SMALL"
+        [ -s "$AVG_SRC" ] || AVG_SRC="$IMAGE"
+        if [ -n "$MAGICK_BIN" ]; then
+            AVG_COLOR="$("$MAGICK_BIN" "$AVG_SRC[0]" -resize 1x1! -format "%[hex:u.p{0,0}]" info: 2>/dev/null || true)"
+            AVG_COLOR="${AVG_COLOR#\#}"
+            AVG_COLOR="${AVG_COLOR:0:6}"
+            if [[ "$AVG_COLOR" =~ ^[0-9A-Fa-f]{6}$ ]]; then
+                if "$MAGICK_BIN" -size 200x200 "gradient:#${AVG_COLOR}-black" "$SAFE_PNG" 2>/dev/null && [ -s "$SAFE_PNG" ]; then
+                    if try_wallust "$SAFE_PNG" || try_wallust -b kmeans "$SAFE_PNG"; then
+                        WALLUST_SUCCESS=1
+                    fi
+                fi
+            fi
+        fi
+    fi
 else
-  err "No se encontró el binario de wallust."
+    err "No se encontró el binario de wallust."
 fi
 
 if [ "$WALLUST_SUCCESS" -eq 0 ]; then
-  err "Wallust falló completamente."
-  exit 1
+    err "Wallust falló completamente."
+    exit 1
 fi
 
 # ---------------------------------------------------------------
 # 8) Aplicar KDE
 # ---------------------------------------------------------------
 if [ -s "$COLOR_SCHEME_FILE" ]; then
-  ACCENT="$(awk -F= '/^[[:space:]]*AccentColor[[:space:]]*=/{gsub(/[[:space:]]/,"",$2); print $2; exit}' "$COLOR_SCHEME_FILE" 2>/dev/null || true)"
-
-  if [ -n "$ACCENT" ]; then
-    if command -v kwriteconfig6 >/dev/null 2>&1; then
-      kwriteconfig6 --file kdeglobals --group General --key AccentColor "$ACCENT" 2>/dev/null || true
-    elif command -v kwriteconfig5 >/dev/null 2>&1; then
-      kwriteconfig5 --file kdeglobals --group General --key AccentColor "$ACCENT" 2>/dev/null || true
-    fi
-  else
-    log "No se encontró AccentColor en $COLOR_SCHEME_FILE."
-  fi
-
-  if command -v plasma-apply-colorscheme >/dev/null 2>&1; then
-    plasma-apply-colorscheme BreezeDark >/dev/null 2>&1 || true
-
-    if plasma-apply-colorscheme "$COLOR_SCHEME_FILE" >/dev/null 2>&1; then
-      log "Esquema aplicado en KDE."
-    elif plasma-apply-colorscheme "$SCHEME_NAME" >/dev/null 2>&1; then
-      log "Esquema aplicado en KDE."
+    ACCENT="$(awk -F= '/^[[:space:]]*AccentColor[[:space:]]*=/{gsub(/[[:space:]]/,"",$2); print $2; exit}' "$COLOR_SCHEME_FILE" 2>/dev/null || true)"
+    if [ -n "$ACCENT" ]; then
+        if command -v kwriteconfig6 >/dev/null 2>&1; then
+            kwriteconfig6 --file kdeglobals --group General --key AccentColor "$ACCENT" 2>/dev/null || true
+        elif command -v kwriteconfig5 >/dev/null 2>&1; then
+            kwriteconfig5 --file kdeglobals --group General --key AccentColor "$ACCENT" 2>/dev/null || true
+        fi
     else
-      log "No se pudo aplicar el esquema en KDE."
+        log "No se encontró AccentColor en $COLOR_SCHEME_FILE."
     fi
-  fi
+
+    if command -v plasma-apply-colorscheme >/dev/null 2>&1; then
+        plasma-apply-colorscheme BreezeDark >/dev/null 2>&1 || true
+        if plasma-apply-colorscheme "$COLOR_SCHEME_FILE" >/dev/null 2>&1; then
+            log "Esquema aplicado en KDE."
+        elif plasma-apply-colorscheme "$SCHEME_NAME" >/dev/null 2>&1; then
+            log "Esquema aplicado en KDE."
+        else
+            log "No se pudo aplicar el esquema en KDE."
+        fi
+    fi
 else
-  log "Wallust terminó, pero no existe $COLOR_SCHEME_FILE; se omite KDE."
+    log "Wallust terminó, pero no existe $COLOR_SCHEME_FILE; se omite KDE."
 fi
 
 # ---------------------------------------------------------------
 # Estado final
 # ---------------------------------------------------------------
 if [ -n "$CONTENT_HASH" ]; then
-  STATE_TMP="${STATE_CACHE}.tmp.$$"
-  if printf '%s\n' "$CONTENT_HASH" > "$STATE_TMP" 2>/dev/null; then
-    mv -f -- "$STATE_TMP" "$STATE_CACHE" 2>/dev/null || true
-    chmod 600 -- "$STATE_CACHE" 2>/dev/null || true
-  fi
+    STATE_TMP="${STATE_CACHE}.tmp.$$"
+    if printf '%s\n' "$CONTENT_HASH" > "$STATE_TMP" 2>/dev/null; then
+        mv -f -- "$STATE_TMP" "$STATE_CACHE" 2>/dev/null || true
+        chmod 600 -- "$STATE_CACHE" 2>/dev/null || true
+    fi
 fi
 
 log "Listo."
