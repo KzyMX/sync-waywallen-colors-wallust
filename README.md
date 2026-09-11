@@ -16,7 +16,7 @@ Automatically sync your KDE Plasma colors with your Wallpaper Engine wallpapers 
 Clone the repository:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/sync-waywallen-colors-wallust.git
+git clone https://github.com/KzyMX/sync-waywallen-colors-wallust.git
 cd sync-waywallen-colors-wallust
 ```
 
