@@ -41,9 +41,11 @@ If you prefer to install everything manually:
 
 ```bash
 mkdir -p ~/.local/bin
+mkdir -p ~/.config/systemd/user/ 
 
-cp *.sh ~/.local/bin/
-chmod +x ~/.local/bin/*.sh
+chmod +x sync-waywallen-colors watch-waywallen.sh 
+cp sync-waywallen-colors watch-waywallen.sh ~/.local/bin/
+cp waywallen-colors.service ~/.config/systemd/user/
 
 systemctl --user daemon-reload
 systemctl --user enable --now waywallen-colors.service
@@ -64,13 +66,13 @@ Simply change your wallpaper in **Wallpaper Engine** and KDE Plasma will automat
 You can force a color extraction for a specific image or folder at any time:
 
 ```bash
-waywallen-colors.sh /path/to/image.jpg
+sync-waywallen-colors /path/to/image.jpg
 ```
 
 Or:
 
 ```bash
-waywallen-colors.sh /path/to/folder
+sync-waywallen-colors /path/to/folder
 ```
 
 ### Service Management
