@@ -187,7 +187,7 @@ If you fix a bug yourself, please submit a Pull Request instead of just reportin
 
 ## 🙏 Acknowledgments
 
-* **Waywallen** – The essential bridge between Wallpaper Engine and Linux
+* **[Waywallen](https://github.com/waywallen/waywallen)** – The essential bridge between Wallpaper Engine and Linux
 * **Wallust** – Fast, intelligent color scheme generation
 * **KDE Plasma Team** – For its excellent theming APIs
 
