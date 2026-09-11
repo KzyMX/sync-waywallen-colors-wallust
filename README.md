@@ -162,7 +162,6 @@ git push origin feature/my-improvement
 
 ### Areas Where Help Is Needed
 
-* 🚧 **Flatpak Steam support** – Detect and handle Flatpak Steam Workshop paths
 * 🎨 **Additional color scheme backends** – GNOME, Hyprland, Sway, etc.
 * 🐛 **Bug fixes and edge-case handling**
 * 📝 **Documentation improvements**
