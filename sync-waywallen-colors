@@ -436,7 +436,7 @@ ACCENT_RGB=""
 if [ -n "$MAGICK_BIN" ]; then
 if "$MAGICK_BIN" "$IMAGE[0]" -alpha off -filter box -resize "${MAXPX}x${MAXPX}>" -depth 8 "$ANALYSIS" 2>/dev/null && [ -s "$ANALYSIS" ]; then
 EXTRACT="$("$MAGICK_BIN" "$ANALYSIS" -colors "$QCOLORS" -depth 8 -format %c histogram:info: 2>/dev/null | awk '
-function hx(ch){ return index(\"0123456789abcdef\", tolower(ch)) - 1 }
+function hx(ch){ return index("0123456789abcdef", tolower(ch)) - 1 }
 function rgb2hsl(r,g,b,   mx,mn,d,h,s,l){
 r/=255; g/=255; b/=255;
 mx=r; if(g>mx)mx=g; if(b>mx)mx=b;
@@ -454,8 +454,8 @@ h/=6;
 H=h; S=s; L=l;
 }
 {
-c=$1; gsub(\":\",\"\",c); c+=0;
-hex=$3; gsub(/^#/,\"\",hex);
+c=$1; gsub(":","",c); c+=0;
+hex=$3; gsub(/^#/,"",hex);
 if (hex !~ /^[0-9A-Fa-f]+$/) next;
 if (length(hex)==8) hex=substr(hex,1,6);
 if (length(hex)!=6) next;
@@ -464,16 +464,16 @@ g=hx(substr(hex,3,1))*16+hx(substr(hex,4,1));
 b=hx(substr(hex,5,1))*16+hx(substr(hex,6,1));
 total+=c;
 rgb2hsl(r,g,b);
-if (c>bestc){ bestc=c; hn=H; sn=S; nhex=\"#\" toupper(hex) }
+if (c>bestc){ bestc=c; hn=H; sn=S; nhex="#" toupper(hex) }
 if (S>=0.12 && L>=0.15 && L<=0.85){
 score=c*(0.5+S);
-if (score>pscore){ pscore=score; hp=H; sp=S; phex=\"#\" toupper(hex) }
+if (score>pscore){ pscore=score; hp=H; sp=S; phex="#" toupper(hex) }
 }
 }
 END{
 if (total<=0) exit 1;
 if (pscore<=0){ hp=hn; sp=sn; phex=nhex }
-printf \"%.6f %.6f %.6f %.6f %s %s\n\", hp, sp, hn, sn, phex, nhex;
+printf "%.6f %.6f %.6f %.6f %s %s\n", hp, sp, hn, sn, phex, nhex;
 }')"
 read -r HP SP HN SN PHEX NHEX <<< "$EXTRACT"
 for v in "$HP" "$SP" "$HN" "$SN"; do
@@ -488,8 +488,8 @@ fi
 # 7) KDE color scheme generation: unified, tinted, chip-style selection
 # ---------------------------------------------------------------
 if [ -n "$HP" ]; then
-SN_ADJ="$(awk -v s="$SN" -v m="$TINT_STRENGTH" -v c="$TINT_CAP" 'BEGIN{ s+=0; if (s<0.03) printf \"%.4f\", s; else { a=s*m; if (a>c) a=c; printf \"%.4f\", a } }')"
-SP_ADJ="$(awk -v s="$SP" 'BEGIN{ s+=0; if (s<0.20) printf \"%.4f\", s; else { a=s*0.80; if (a>0.70) a=0.70; printf \"%.4f\", a } }')"
+SN_ADJ="$(awk -v s="$SN" -v m="$TINT_STRENGTH" -v c="$TINT_CAP" 'BEGIN{ s+=0; if (s<0.03) printf "%.4f", s; else { a=s*m; if (a>c) a=c; printf "%.4f", a } }')"
+SP_ADJ="$(awk -v s="$SP" 'BEGIN{ s+=0; if (s<0.20) printf "%.4f", s; else { a=s*0.80; if (a>0.70) a=0.70; printf "%.4f", a } }')"
 SCHEME_TMP="${COLOR_SCHEME_FILE}.tmp.$$"
 ACCENT_RGB="$(awk -v hp="$HP" -v sp="$SP_ADJ" -v hn="$HN" -v sn="$SN_ADJ" -v bgl="$BG_LUM" -v sellift="$SEL_LIFT" -v name="$SCHEME_NAME" -v out="$SCHEME_TMP" '
 function h2r(p,q,t){ if(t<0)t+=1; if(t>1)t-=1; if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p }
@@ -498,27 +498,27 @@ h+=0; s+=0; l+=0;
 if(h<0)h+=1; if(h>1)h-=1;
 if(s<0)s=0; if(s>1)s=1;
 if(l<0)l=0; if(l>1)l=1;
-if(s<=0){ v=int(l*255+0.5); return v \",\" v \",\" v }
+if(s<=0){ v=int(l*255+0.5); return v "," v "," v }
 q = (l<0.5) ? l*(1+s) : l+s-l*s;
 p = 2*l-q;
-return int(h2r(p,q,h+1/3)*255+0.5) \",\" int(h2r(p,q,h)*255+0.5) \",\" int(h2r(p,q,h-1/3)*255+0.5)
+return int(h2r(p,q,h+1/3)*255+0.5) "," int(h2r(p,q,h)*255+0.5) "," int(h2r(p,q,h-1/3)*255+0.5)
 }
 function blk(g,h,s,bgl,fg,   ba,bg){
 ba=col(h,s,bgl+0.025); bg=col(h,s,bgl);
-printf \"[%s]\n\", g > out;
-printf \"BackgroundAlternate=%s\n\", ba > out;
-printf \"BackgroundNormal=%s\n\", bg > out;
-printf \"DecorationFocus=%s\n\", FOC > out;
-printf \"DecorationHover=%s\n\", HOV > out;
-printf \"ForegroundActive=%s\n\", FACT > out;
-printf \"ForegroundInactive=%s\n\", FINACT > out;
-printf \"ForegroundLink=%s\n\", FLINK > out;
-printf \"ForegroundNegative=%s\n\", FNEG > out;
-printf \"ForegroundNeutral=%s\n\", FNEU > out;
-printf \"ForegroundNormal=%s\n\", fg > out;
-printf \"ForegroundPositive=%s\n\", FPOS > out;
-printf \"ForegroundVisited=%s\n\", FVIS > out;
-printf \"\n\" > out;
+printf "[%s]\n", g > out;
+printf "BackgroundAlternate=%s\n", ba > out;
+printf "BackgroundNormal=%s\n", bg > out;
+printf "DecorationFocus=%s\n", FOC > out;
+printf "DecorationHover=%s\n", HOV > out;
+printf "ForegroundActive=%s\n", FACT > out;
+printf "ForegroundInactive=%s\n", FINACT > out;
+printf "ForegroundLink=%s\n", FLINK > out;
+printf "ForegroundNegative=%s\n", FNEG > out;
+printf "ForegroundNeutral=%s\n", FNEU > out;
+printf "ForegroundNormal=%s\n", fg > out;
+printf "ForegroundPositive=%s\n", FPOS > out;
+printf "ForegroundVisited=%s\n", FVIS > out;
+printf "\n" > out;
 }
 BEGIN{
 FOC=col(hp,sp*0.75,0.48); HOV=col(hp,sp*0.60,0.55); FACT=col(hp,sp*0.80,0.62);
@@ -529,34 +529,34 @@ TFG=col(hn,sn*0.20,0.90);
 SELBG=col(hn,sn,bgl+sellift);
 SELBGA=col(hn,sn,bgl+sellift+0.04);
 SELFG=col(hn,sn*0.15,0.93);
-printf \"[General]\n\" > out;
-printf \"ColorScheme=%s\n\", name > out;
-printf \"Name=%s\n\", name > out;
-printf \"shadeSortColumn=true\n\" > out;
-printf \"\n\" > out;
-blk(\"Colors:Window\", hn, sn, bgl, WFG);
-blk(\"Colors:View\", hn, sn, bgl, WFG);
-blk(\"Colors:Button\", hn, sn, bgl+0.02, WFG);
-blk(\"Colors:Tooltip\", hn, sn, bgl+0.08, TFG);
-printf \"[Colors:Selection]\n\" > out;
-printf \"BackgroundAlternate=%s\n\", SELBGA > out;
-printf \"BackgroundNormal=%s\n\", SELBG > out;
-printf \"DecorationFocus=%s\n\", FOC > out;
-printf \"DecorationHover=%s\n\", HOV > out;
-printf \"ForegroundActive=%s\n\", FACT > out;
-printf \"ForegroundInactive=%s\n\", FINACT > out;
-printf \"ForegroundLink=%s\n\", FLINK > out;
-printf \"ForegroundNegative=%s\n\", FNEG > out;
-printf \"ForegroundNeutral=%s\n\", FNEU > out;
-printf \"ForegroundNormal=%s\n\", SELFG > out;
-printf \"ForegroundPositive=%s\n\", FPOS > out;
-printf \"ForegroundVisited=%s\n\", FVIS > out;
-printf \"\n\" > out;
-printf \"[WM]\n\" > out;
-printf \"activeBackground=%s\n\", col(hn,sn,bgl) > out;
-printf \"activeForeground=%s\n\", WFG > out;
-printf \"inactiveBackground=%s\n\", col(hn,sn,bgl) > out;
-printf \"inactiveForeground=%s\n\", col(hn,sn*0.3,0.60) > out;
+printf "[General]\n" > out;
+printf "ColorScheme=%s\n", name > out;
+printf "Name=%s\n", name > out;
+printf "shadeSortColumn=true\n" > out;
+printf "\n" > out;
+blk("Colors:Window", hn, sn, bgl, WFG);
+blk("Colors:View", hn, sn, bgl, WFG);
+blk("Colors:Button", hn, sn, bgl+0.02, WFG);
+blk("Colors:Tooltip", hn, sn, bgl+0.08, TFG);
+printf "[Colors:Selection]\n" > out;
+printf "BackgroundAlternate=%s\n", SELBGA > out;
+printf "BackgroundNormal=%s\n", SELBG > out;
+printf "DecorationFocus=%s\n", FOC > out;
+printf "DecorationHover=%s\n", HOV > out;
+printf "ForegroundActive=%s\n", FACT > out;
+printf "ForegroundInactive=%s\n", FINACT > out;
+printf "ForegroundLink=%s\n", FLINK > out;
+printf "ForegroundNegative=%s\n", FNEG > out;
+printf "ForegroundNeutral=%s\n", FNEU > out;
+printf "ForegroundNormal=%s\n", SELFG > out;
+printf "ForegroundPositive=%s\n", FPOS > out;
+printf "ForegroundVisited=%s\n", FVIS > out;
+printf "\n" > out;
+printf "[WM]\n" > out;
+printf "activeBackground=%s\n", col(hn,sn,bgl) > out;
+printf "activeForeground=%s\n", WFG > out;
+printf "inactiveBackground=%s\n", col(hn,sn,bgl) > out;
+printf "inactiveForeground=%s\n", col(hn,sn*0.3,0.60) > out;
 close(out);
 print col(hp,sp,0.55);
 }' 2>/dev/null || true)"
@@ -666,11 +666,6 @@ fi
 
 # ---------------------------------------------------------------
 # 9) Wallust templates (kitty, etc.) and widget refresh
-#    9a) Runs wallust on a 16-swatch tonal strip from our palette
-#        to satisfy kmeans requirements and prevent errors, with fallbacks.
-#        Uses setsid to prevent spinner output contamination.
-#    9b) Restores the original scheme, reapplies it, and reloads
-#        the desktop theme to repaint widgets.
 # ---------------------------------------------------------------
 run_wallust_quiet() {
 if command -v setsid >/dev/null 2>&1; then
@@ -693,7 +688,7 @@ if(s<=0){ r=l; g=l; b=l } else {
 q=(l<0.5)? l*(1+s) : l+s-l*s; p=2*l-q;
 r=h2r(p,q,h+1/3); g=h2r(p,q,h); b=h2r(p,q,h-1/3);
 }
-return sprintf(\"#%02X%02X%02X\", int(r*255+0.5), int(g*255+0.5), int(b*255+0.5));
+return sprintf("#%02X%02X%02X", int(r*255+0.5), int(g*255+0.5), int(b*255+0.5));
 }
 BEGIN{
 for(i=0;i<8;i++) print colh(hp, sp, 0.06+i*0.12);
